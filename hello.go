@@ -157,6 +157,7 @@ func main() {
   }()
   
   for _, person := range p.Persons {
+    person := person
     for _, plan := range person.Plans {
       c := make(chan Event)
       cc <- c
