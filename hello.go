@@ -52,9 +52,10 @@ type Activity struct {
   Link string `xml:"link,attr"`
   Type string `xml:"type,attr"`
   EndTime string `xml:"end_time,attr"`
-  Duration string `xml:"dur,attr"`
+  Duration string `xml:"max_dur,attr"`
 }
 type Plan struct {
+  Selected string `xml:"selected,attr"`
   Activities []Activity `xml:"act"`
 }
 type Event struct {
@@ -67,9 +68,9 @@ type Event struct {
 }
 func (p *Plan) start() (time.Time, string, string, string, Plan) {
   a := p.Activities[0]
-  end_time, _ := time.Parse("15:04", a.EndTime)
+  end_time, _ := time.Parse("15:04:05", a.EndTime)
   next_destination := p.Activities[1].Link
-  return end_time, a.Link, next_destination, a.Type, Plan{p.Activities[1:]}
+  return end_time, a.Link, next_destination, a.Type, Plan{"yes", p.Activities[1:]}
 }
 func (plan *Plan) simulate(person *Person, c chan Event) {
   end_time, linkId, next_destination, actType, rest := plan.start()
@@ -84,11 +85,16 @@ func (plan *Plan) simulate(person *Person, c chan Event) {
 func (p *Plan) arrive(arrival_time time.Time) (time.Time, string, string, Plan) {
   if (len(p.Activities) > 1) {
     a := p.Activities[0]
-    dur_time, _ := time.Parse("15:04", a.Duration)
-    dur := time2Dur(dur_time)
-    end_time := arrival_time.Add(dur)
     next_destination := p.Activities[1].Link
-    return end_time, next_destination, a.Type, Plan{p.Activities[1:]}  
+    dur_time, err := time.Parse("15:04:05", a.Duration)
+    if err == nil {
+      dur := time2Dur(dur_time)
+      end_time := arrival_time.Add(dur)
+      return end_time, next_destination, a.Type, Plan{"yes", p.Activities[1:]}  
+    } else {
+      end_time, _ := time.Parse("15:04:05", a.EndTime)
+      return end_time, next_destination, a.Type, Plan{"yes", p.Activities[1:]}  
+    }
   } else {
     return time.Now(), "", "", Plan{}
   }
@@ -121,11 +127,22 @@ func population() Population {
   return v  
 }
 
+func population2() Population {
+  filename := "/Users/michaelzilske/IDEAcheckout/matsim/output/equil/output_plans.xml.gz"
+  file, _ := os.Open(filename)
+  r, _ := gzip.NewReader(file)
+  d := xml.NewDecoder(r)
+  v := Population{}
+  d.Decode(&v)
+  r.Close()
+  return v  
+}
+
 func main() {
   n := network()
   fmt.Printf("hello, world\n")
   fmt.Printf("%d\n", len(n.Links))
-  p := population()
+  p := population2()
   done := make(chan int)
   cc := make(chan (chan Event))
   go func() {
@@ -159,9 +176,11 @@ func main() {
   for _, person := range p.Persons {
     person := person
     for _, plan := range person.Plans {
-      c := make(chan Event)
-      cc <- c
-      go plan.simulate(&person, c) 
+      if plan.Selected == "yes" {
+        c := make(chan Event)
+        cc <- c
+        go plan.simulate(&person, c) 
+      }
     }
   }
   close(cc)
