@@ -57,6 +57,10 @@ type Activity struct {
 type Plan struct {
   Selected string `xml:"selected,attr"`
   Activities []Activity `xml:"act"`
+  Legs []Leg `xml:"leg"`
+}
+type Leg struct {
+  Route string `xml:"route"`
 }
 type Event struct {
   XMLName xml.Name `xml:"event"`
@@ -70,7 +74,7 @@ func (p *Plan) start() (time.Time, string, string, string, Plan) {
   a := p.Activities[0]
   end_time, _ := time.Parse("15:04:05", a.EndTime)
   next_destination := p.Activities[1].Link
-  return end_time, a.Link, next_destination, a.Type, Plan{"yes", p.Activities[1:]}
+  return end_time, a.Link, next_destination, a.Type, Plan{"yes", p.Activities[1:], p.Legs}
 }
 func (plan *Plan) simulate(person *Person, c chan Event) {
   end_time, linkId, next_destination, actType, rest := plan.start()
@@ -90,10 +94,10 @@ func (p *Plan) arrive(arrival_time time.Time) (time.Time, string, string, Plan) 
     if err == nil {
       dur := time2Dur(dur_time)
       end_time := arrival_time.Add(dur)
-      return end_time, next_destination, a.Type, Plan{"yes", p.Activities[1:]}  
+      return end_time, next_destination, a.Type, Plan{"yes", p.Activities[1:], p.Legs}  
     } else {
       end_time, _ := time.Parse("15:04:05", a.EndTime)
-      return end_time, next_destination, a.Type, Plan{"yes", p.Activities[1:]}  
+      return end_time, next_destination, a.Type, Plan{"yes", p.Activities[1:], p.Legs}  
     }
   } else {
     return time.Now(), "", "", Plan{}
@@ -122,6 +126,17 @@ func population() Population {
   r, _ := gzip.NewReader(resp.Body)
   d := xml.NewDecoder(r)
   v := Population{}
+  d.Decode(&v)
+  r.Close()
+  return v  
+}
+
+func network2() Network {
+  filename := "/Users/michaelzilske/IDEAcheckout/matsim/output/equil/output_network.xml.gz"
+  file, _ := os.Open(filename)
+  r, _ := gzip.NewReader(file)
+  d := xml.NewDecoder(r)
+  v := Network{}
   d.Decode(&v)
   r.Close()
   return v  
@@ -177,6 +192,9 @@ func main() {
     person := person
     for _, plan := range person.Plans {
       if plan.Selected == "yes" {
+        for _, leg := range plan.Legs {
+          fmt.Printf("%v\n", leg)
+        }
         c := make(chan Event)
         cc <- c
         go plan.simulate(&person, c) 
