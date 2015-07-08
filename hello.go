@@ -6,6 +6,7 @@ import (
   "encoding/xml"
   "net/http"
   "container/heap"
+  "os"
 )
 func time2Dur(dur_time time.Time) time.Duration {
   zero, _ := time.Parse("15:04", "00:00")
@@ -17,7 +18,7 @@ type ChanWithHead struct {
   tail chan ActivityEnd
 }
 func (cwh ChanWithHead) priority() float64 {
-  return cwh.head.time
+  return cwh.head.Time
 }
 type PriorityQueue []*ChanWithHead
 func (pq PriorityQueue) Len() int { return len(pq) }
@@ -57,39 +58,41 @@ type Plan struct {
 }
 type ActivityEnd struct {
   XMLName xml.Name `xml:"event"`
-  time float64 `xml:"time,attr"`
+  Time float64 `xml:"time,attr"`
   Type string `xml:"type,attr"`
   Person string `xml:"person,attr"`
   Link string `xml:"link,attr"`
   ActType string `xml:"actType,attr"`
 }
-func (p *Plan) start() (time.Time, string, Plan) {
+func (p *Plan) start() (time.Time, string, string, string, Plan) {
   a := p.Activities[0]
   end_time, _ := time.Parse("15:04", a.EndTime)
-  return end_time, p.Activities[1].Link, Plan{p.Activities[1:]}
+  next_destination := p.Activities[1].Link
+  return end_time, a.Link, next_destination, a.Type, Plan{p.Activities[1:]}
 }
 func (plan *Plan) simulate(person *Person, c chan ActivityEnd) {
-  end_time, _, rest := plan.start()
+  end_time, linkId, next_destination, actType, rest := plan.start()
   for len(rest.Activities) > 0 {
-    c <- ActivityEnd{time: time2Dur(end_time).Seconds(), Type: "actEnd", Person: person.Id, Link: "start", ActType: "actType"}
-    end_time, _, rest = rest.arrive(end_time)
+    c <- ActivityEnd{Time: time2Dur(end_time).Seconds(), Type: "actEnd", Person: person.Id, Link: linkId, ActType: actType}
+    linkId = next_destination
+    end_time, linkId, actType, rest = rest.arrive(end_time)
   }
   close(c)  
 }
-func (p *Plan) arrive(arrival_time time.Time) (time.Time, string, Plan) {
+func (p *Plan) arrive(arrival_time time.Time) (time.Time, string, string, Plan) {
   if (len(p.Activities) > 1) {
     a := p.Activities[0]
     dur_time, _ := time.Parse("15:04", a.Duration)
     dur := time2Dur(dur_time)
     end_time := arrival_time.Add(dur)
     next_destination := p.Activities[1].Link
-    return end_time, next_destination, Plan{p.Activities[1:]}  
+    return end_time, next_destination, a.Type, Plan{p.Activities[1:]}  
   } else {
-    return time.Now(), "", Plan{}
+    return time.Now(), "", "", Plan{}
   }
 }
 type Person struct {
-  Id string `xml:"id"`
+  Id string `xml:"id,attr"`
   Plans []Plan `xml:"plan"`
 }
 type Population struct {
@@ -118,9 +121,6 @@ func main() {
   n := network()
   fmt.Printf("hello, world\n")
   fmt.Printf("%d\n", len(n.Links))
-  for _, link := range n.Links {
-    fmt.Printf("%v\n", link)
-  }
   p := population()
   done := make(chan int)
   cc := make(chan (chan ActivityEnd))
@@ -129,7 +129,8 @@ func main() {
     pq := make(PriorityQueue, 0)
     go func() {
       for e := range merged {
-        fmt.Printf("%v\n", e)
+        out, _ := xml.MarshalIndent(e, "\n", " ")
+        os.Stdout.Write(out)      
       }
       done <- 0
     }()
