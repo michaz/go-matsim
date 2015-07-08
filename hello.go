@@ -7,6 +7,7 @@ import (
   "net/http"
   "container/heap"
   "os"
+  "compress/gzip"
 )
 func time2Dur(dur_time time.Time) time.Duration {
   zero, _ := time.Parse("15:04", "00:00")
@@ -14,8 +15,8 @@ func time2Dur(dur_time time.Time) time.Duration {
   return dur
 }
 type ChanWithHead struct {
-  head ActivityEnd
-  tail chan ActivityEnd
+  head Event
+  tail chan Event
 }
 func (cwh ChanWithHead) priority() float64 {
   return cwh.head.Time
@@ -56,7 +57,7 @@ type Activity struct {
 type Plan struct {
   Activities []Activity `xml:"act"`
 }
-type ActivityEnd struct {
+type Event struct {
   XMLName xml.Name `xml:"event"`
   Time float64 `xml:"time,attr"`
   Type string `xml:"type,attr"`
@@ -70,11 +71,12 @@ func (p *Plan) start() (time.Time, string, string, string, Plan) {
   next_destination := p.Activities[1].Link
   return end_time, a.Link, next_destination, a.Type, Plan{p.Activities[1:]}
 }
-func (plan *Plan) simulate(person *Person, c chan ActivityEnd) {
+func (plan *Plan) simulate(person *Person, c chan Event) {
   end_time, linkId, next_destination, actType, rest := plan.start()
   for len(rest.Activities) > 0 {
-    c <- ActivityEnd{Time: time2Dur(end_time).Seconds(), Type: "actEnd", Person: person.Id, Link: linkId, ActType: actType}
+    c <- Event{Time: time2Dur(end_time).Seconds(), Type: "actEnd", Person: person.Id, Link: linkId, ActType: actType}
     linkId = next_destination
+    c <- Event{Time: time2Dur(end_time).Seconds(), Type: "actStart", Person: person.Id, Link: linkId, ActType: actType}
     end_time, linkId, actType, rest = rest.arrive(end_time)
   }
   close(c)  
@@ -100,20 +102,22 @@ type Population struct {
 }
 
 func network() Network {
-  resp, _ := http.Get("http://ci.matsim.org:8080/job/MATSim_M2/ws/trunk/examples/equil/network.xml")
-  defer resp.Body.Close()
-  d := xml.NewDecoder(resp.Body)
+  resp, _ := http.Get("http://ci.matsim.org:8080/job/MATSim_M2/ws/trunk/src/test/resources/test/scenarios/berlin/network.xml.gz")
+  r, _ := gzip.NewReader(resp.Body)
+  d := xml.NewDecoder(r)
   v := Network{}
   d.Decode(&v)
+  r.Close()
   return v  
 }
 
 func population() Population {
-  resp, _ := http.Get("http://ci.matsim.org:8080/job/MATSim_M2/ws/trunk/examples/equil/plans100.xml")
-  defer resp.Body.Close()
-  d := xml.NewDecoder(resp.Body)
+  resp, _ := http.Get("http://ci.matsim.org:8080/job/MATSim_M2/ws/trunk/src/test/resources/test/scenarios/berlin/plans_hwh_1pct.xml.gz")
+  r, _ := gzip.NewReader(resp.Body)
+  d := xml.NewDecoder(r)
   v := Population{}
   d.Decode(&v)
+  r.Close()
   return v  
 }
 
@@ -123,9 +127,9 @@ func main() {
   fmt.Printf("%d\n", len(n.Links))
   p := population()
   done := make(chan int)
-  cc := make(chan (chan ActivityEnd))
+  cc := make(chan (chan Event))
   go func() {
-    merged := make(chan ActivityEnd)
+    merged := make(chan Event)
     pq := make(PriorityQueue, 0)
     go func() {
       for e := range merged {
@@ -154,7 +158,7 @@ func main() {
   
   for _, person := range p.Persons {
     for _, plan := range person.Plans {
-      c := make(chan ActivityEnd)
+      c := make(chan Event)
       cc <- c
       go plan.simulate(&person, c) 
     }
